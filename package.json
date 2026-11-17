@@ -1,0 +1,9 @@
+{
+  "name": "stockroom",
+  "private": true,
+  "scripts": {
+    "test": "npm run test --prefix api",
+    "build": "npm run build --prefix web",
+    "verify": "npm test && npm run build"
+  }
+}

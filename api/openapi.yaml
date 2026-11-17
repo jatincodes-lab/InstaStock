@@ -1,0 +1,258 @@
+openapi: 3.1.0
+info:
+  title: Stockroom Authentication API
+  version: 1.0.0
+  description: Invitation-only authentication, sessions, password recovery, and tenant invitations.
+servers:
+  - url: /
+security: []
+paths:
+  /api/v1/auth/csrf:
+    get:
+      summary: Bootstrap the CSRF token
+      responses:
+        '200':
+          description: CSRF token and readable CSRF cookie issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [csrfToken]
+                properties:
+                  csrfToken: { type: string }
+  /api/v1/auth/login:
+    post:
+      summary: Sign in with email and password
+      description: Requires the CSRF cookie/header and exact configured Origin. Success sets an opaque HttpOnly session cookie.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, password]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                password: { type: string, maxLength: 1024 }
+      responses:
+        '200': { description: Signed in; session cookie set. }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/InvalidCredentials' }
+        '403': { $ref: '#/components/responses/CsrfError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/v1/auth/session:
+    get:
+      summary: Read the current user and active tenant memberships
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Current user and active memberships. }
+        '401': { description: Session is absent, expired, or revoked. }
+  /api/v1/auth/logout:
+    post:
+      summary: Revoke the current session
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204': { description: Session revoked or already absent; cookies cleared. }
+        '403': { $ref: '#/components/responses/CsrfError' }
+  /api/v1/auth/logout-all:
+    post:
+      summary: Revoke all sessions after password confirmation
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [password]
+              properties:
+                password: { type: string, maxLength: 1024 }
+      responses:
+        '204': { description: All sessions revoked; cookies cleared. }
+        '401': { description: Session is absent or password is invalid. }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/v1/auth/password-resets:
+    post:
+      summary: Request a password reset email
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+      responses:
+        '202': { description: Generic response that does not confirm account existence. }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/v1/auth/password-resets/confirm:
+    post:
+      summary: Consume a password reset token
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [token, newPassword]
+              properties:
+                token: { type: string, minLength: 43, maxLength: 43 }
+                newPassword: { type: string, minLength: 15, maxLength: 128 }
+      responses:
+        '204': { description: Password changed; all sessions revoked. }
+        '400': { description: Validation failure or invalid, expired, revoked, or consumed token. }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/v1/auth/invitations/accept:
+    post:
+      summary: Accept an invitation
+      description: New users provide a password. Existing users must sign in with the invited email; their password is unchanged.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [token]
+              properties:
+                token: { type: string, minLength: 43, maxLength: 43 }
+                password: { type: string, minLength: 15, maxLength: 128 }
+      responses:
+        '200': { description: Invitation accepted; a new user receives a session cookie. }
+        '400': { description: Invalid or expired invitation token, or password validation error. }
+        '409': { description: Existing account must sign in or membership already exists. }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/v1/tenants/{tenantId}/invitations:
+    parameters:
+      - $ref: '#/components/parameters/TenantId'
+    get:
+      summary: List invitations visible to the current member
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Invitations visible within the caller's tenant scope. }
+        '401': { description: Session is absent, expired, or revoked. }
+        '404': { description: Tenant or permission not found. }
+    post:
+      summary: Create or replace a pending invitation
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, role, branches, warehouses]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                role: { type: string, maxLength: 50 }
+                branches: { type: array, maxItems: 100, uniqueItems: true, items: { type: string, format: uuid } }
+                warehouses: { type: array, maxItems: 100, uniqueItems: true, items: { type: string, format: uuid } }
+      responses:
+        '202': { description: Invitation and encrypted email queued atomically. }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { description: Session is absent, expired, or revoked. }
+        '403': { description: Caller cannot assign the requested role or scope. }
+        '404': { description: Tenant or permission not found. }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/v1/tenants/{tenantId}/invitations/{invitationId}/resend:
+    post:
+      summary: Rotate and resend a pending invitation token
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/InvitationId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204': { description: Invitation token rotated and email queued. }
+        '401': { description: Session is absent, expired, or revoked. }
+        '404': { description: Invitation or permission not found. }
+        '409': { description: Invitation is no longer pending. }
+  /api/v1/tenants/{tenantId}/invitations/{invitationId}/revoke:
+    post:
+      summary: Revoke a pending invitation
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/InvitationId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204': { description: Invitation revoked or already inactive. }
+        '401': { description: Session is absent, expired, or revoked. }
+        '404': { description: Invitation or permission not found. }
+components:
+  parameters:
+    CsrfHeader:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema: { type: string }
+    TenantId:
+      name: tenantId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    InvitationId:
+      name: invitationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-stockroom_session
+  responses:
+    ValidationError:
+      description: Request body failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InvalidCredentials:
+      description: Email/password combination is invalid or account cannot access a tenant.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    CsrfError:
+      description: CSRF token, Origin, or Fetch Metadata check failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimited:
+      description: Rate limit exceeded; response includes Retry-After.
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        fields: { type: object, additionalProperties: { type: string } }

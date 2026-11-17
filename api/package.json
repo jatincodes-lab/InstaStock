@@ -1,0 +1,1 @@
+{"name":"stockroom-api","private":true,"type":"module","engines":{"node":">=20"},"scripts":{"dev":"node --watch src/server.mjs","start":"node src/server.mjs","migrate":"node scripts/migrate.mjs","bootstrap-owner":"node scripts/bootstrap-owner.mjs","email-worker":"node src/email-worker.mjs","test":"node --test"},"dependencies":{"dotenv":"^18.0.9","pg":"^8.23.1"}}
